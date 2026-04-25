@@ -38,9 +38,10 @@ export function SearchFiltersBar({ filters, onChange }: Props) {
           <NumberStepper
             value={filters.maxWords}
             min={filters.minWords}
-            max={12}
+            max={99}
             onChange={(n) => onChange({ ...filters, maxWords: n })}
             label="מקסימום"
+            editable
           />
         </div>
 
@@ -85,13 +86,20 @@ function NumberStepper({
   max,
   onChange,
   label,
+  editable = false,
 }: {
   value: number;
   min: number;
   max: number;
   onChange: (n: number) => void;
   label: string;
+  editable?: boolean;
 }) {
+  function clamp(n: number): number {
+    if (!Number.isFinite(n)) return min;
+    return Math.min(max, Math.max(min, Math.trunc(n)));
+  }
+
   return (
     <div className="flex items-center rounded-lg border border-[var(--hairline)]" aria-label={label}>
       <button
@@ -103,7 +111,27 @@ function NumberStepper({
       >
         −
       </button>
-      <span className="w-7 text-center tabular-nums">{value}</span>
+      {editable ? (
+        <input
+          type="number"
+          inputMode="numeric"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10);
+            if (Number.isFinite(n)) onChange(clamp(n));
+          }}
+          onBlur={(e) => {
+            const n = parseInt(e.target.value, 10);
+            onChange(clamp(Number.isFinite(n) ? n : value));
+          }}
+          className="w-10 bg-transparent text-center tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          aria-label={`${label} ערך`}
+        />
+      ) : (
+        <span className="w-7 text-center tabular-nums">{value}</span>
+      )}
       <button
         type="button"
         onClick={() => onChange(Math.min(max, value + 1))}

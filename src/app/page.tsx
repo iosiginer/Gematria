@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Database } from "sql.js";
 
 import { TextInput } from "@/components/TextInput";
 import { MethodPicker } from "@/components/MethodPicker";
@@ -11,8 +10,9 @@ import { SearchFiltersBar } from "@/components/SearchFilters";
 import { LoadingBar } from "@/components/LoadingBar";
 import { AboutModal } from "@/components/AboutModal";
 
-import { computeAll, isNumericInput, valueFor, METHOD_LABELS } from "@/lib/gematria";
+import { isNumericInput, valueFor, METHOD_LABELS } from "@/lib/gematria";
 import { loadDatabase } from "@/lib/db";
+import { buildIndex, type GematriaIndex } from "@/lib/gematriaIndex";
 import { searchSpans } from "@/lib/search";
 import type { GematriaMethod, SearchFilters, SearchResult } from "@/types";
 
@@ -28,7 +28,7 @@ export default function Home() {
   const [method, setMethod] = useState<GematriaMethod>("standard");
   const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
 
-  const [db, setDb] = useState<Database | null>(null);
+  const [index, setIndex] = useState<GematriaIndex | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadStage, setLoadStage] = useState<{ stage: string; loaded?: number; total?: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -68,14 +68,16 @@ export default function Home() {
     return valueFor(input, method);
   }, [input, method]);
 
-  const ensureDb = useCallback(async (): Promise<Database> => {
-    if (db) return db;
+  const ensureIndex = useCallback(async (): Promise<GematriaIndex> => {
+    if (index) return index;
     setLoading(true);
     setLoadError(null);
     try {
-      const loaded = await loadDatabase((info) => setLoadStage(info));
-      setDb(loaded);
-      return loaded;
+      const db = await loadDatabase((info) => setLoadStage(info));
+      setLoadStage({ stage: "index" });
+      const built = buildIndex(db);
+      setIndex(built);
+      return built;
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
       throw e;
@@ -83,14 +85,14 @@ export default function Home() {
       setLoading(false);
       setLoadStage(null);
     }
-  }, [db]);
+  }, [index]);
 
   const runSearch = useCallback(async () => {
     if (computedValue === null || computedValue <= 0) return;
     setSearching(true);
     try {
-      const handle = await ensureDb();
-      const { total, results } = searchSpans(handle, {
+      const idx = await ensureIndex();
+      const { total, results } = searchSpans(idx, {
         value: computedValue,
         method,
         filters,
@@ -100,15 +102,15 @@ export default function Home() {
       setTotal(total);
       setSearched(true);
     } catch {
-      // ensureDb already surfaces the error via loadError
+      // ensureIndex already surfaces the error via loadError
     } finally {
       setSearching(false);
     }
-  }, [computedValue, method, filters, ensureDb]);
+  }, [computedValue, method, filters, ensureIndex]);
 
   // If results are showing, re-run automatically when filters or method change.
   useEffect(() => {
-    if (!searched || !db || computedValue === null) return;
+    if (!searched || !index || computedValue === null) return;
     runSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [method, filters.minWords, filters.maxWords, filters.sections.join(","), filters.wholeVerseOnly]);
@@ -180,7 +182,7 @@ export default function Home() {
           </div>
         )}
 
-        {(loading || (searching && !db)) && loadStage && (
+        {(loading || (searching && !index)) && loadStage && (
           <LoadingBar {...loadStage} />
         )}
 

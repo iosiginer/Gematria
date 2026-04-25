@@ -1,12 +1,13 @@
-import type { Database } from "sql.js";
-import type { GematriaMethod, SearchFilters, SearchResult, Section } from "@/types";
+// Pure-scan search over the in-memory gematria index.
+//
+// For each verse we walk every (start, length) pair within the user's
+// word-count window and check whether cumsum[start+length] - cumsum[start]
+// equals the requested value. With Int32Array cumsums this is ~5-30ms over
+// the whole Tanakh on commodity hardware — well below the click-to-result
+// budget.
 
-const VALUE_COLUMN: Record<GematriaMethod, string> = {
-  standard: "value_std",
-  sofit: "value_sofit",
-  katan: "value_katan",
-  kolel: "value_kolel",
-};
+import type { GematriaMethod, SearchFilters, SearchResult, Section } from "@/types";
+import type { GematriaIndex, VerseEntry } from "@/lib/gematriaIndex";
 
 export interface SearchArgs {
   value: number;
@@ -16,115 +17,116 @@ export interface SearchArgs {
 }
 
 export interface SearchOutcome {
-  total: number;        // matches that satisfy the filters (ignoring LIMIT)
+  total: number;
   results: SearchResult[];
 }
 
-export function searchSpans(db: Database, args: SearchArgs): SearchOutcome {
+const ALL_SECTIONS: Section[] = ["Torah", "Prophets", "Writings"];
+
+interface RawMatch {
+  verse: VerseEntry;
+  wordStart: number;
+  wordEnd: number;
+  spanWordCount: number;
+}
+
+export function searchSpans(index: GematriaIndex, args: SearchArgs): SearchOutcome {
   const { value, method, filters, limit = 100 } = args;
-  const col = VALUE_COLUMN[method];
-
-  // Build dynamic section filter (default: all on).
-  const sectionList = filters.sections.length
-    ? filters.sections
-    : (["Torah", "Prophets", "Writings"] as Section[]);
-
-  const sectionPlaceholders = sectionList.map(() => "?").join(", ");
-
-  const whereParts: string[] = [
-    `s.${col} = :value`,
-    `s.word_count BETWEEN :minW AND :maxW`,
-    `b.section IN (${sectionPlaceholders})`,
-  ];
-  if (filters.wholeVerseOnly) {
-    whereParts.push(`s.word_count = v.word_count`);
+  if (!Number.isFinite(value) || value <= 0) {
+    return { total: 0, results: [] };
   }
-  const where = whereParts.join(" AND ");
 
-  // First: get total count (without limit).
-  const countSql = `
-    SELECT COUNT(*) AS n
-    FROM spans s
-    JOIN verses v ON v.id = s.verse_id
-    JOIN books b ON b.id = v.book_id
-    WHERE ${where}
-  `;
-
-  const countParams: Record<string, unknown> = {
-    ":value": value,
-    ":minW": filters.minWords,
-    ":maxW": filters.maxWords,
+  const sections = filters.sections.length ? filters.sections : ALL_SECTIONS;
+  const sectionAllowed: Record<Section, boolean> = {
+    Torah: sections.includes("Torah"),
+    Prophets: sections.includes("Prophets"),
+    Writings: sections.includes("Writings"),
   };
-  // sql.js named params get mixed with positional sectionList — so we use a
-  // single positional list for both queries.
-  const positional = [value, filters.minWords, filters.maxWords, ...sectionList];
-  void countParams; // unused; kept for clarity
 
-  const positionalCountSql = countSql
-    .replace(":value", "?")
-    .replace(":minW", "?")
-    .replace(":maxW", "?");
+  const minW = Math.max(1, filters.minWords | 0);
+  const maxW = Math.max(minW, filters.maxWords | 0);
+  const wholeOnly = !!filters.wholeVerseOnly;
 
-  const countStmt = db.prepare(positionalCountSql);
-  countStmt.bind(positional);
+  const matches: RawMatch[] = [];
   let total = 0;
-  if (countStmt.step()) {
-    const row = countStmt.getAsObject() as { n: number };
-    total = row.n;
+
+  for (const v of index.verses) {
+    if (!sectionAllowed[v.section]) continue;
+
+    const N = v.wordCount;
+    if (wholeOnly) {
+      if (N < minW || N > maxW) continue;
+      const spanValue = pickSpanValue(v, 0, N, method);
+      if (spanValue === value) {
+        total++;
+        matches.push({ verse: v, wordStart: 0, wordEnd: N - 1, spanWordCount: N });
+      }
+      continue;
+    }
+
+    const cs = pickCumsum(v, method);
+    const isKolel = method === "kolel";
+    const lo = minW;
+    const hi = maxW < N ? maxW : N;
+
+    for (let length = lo; length <= hi; length++) {
+      // For kolel: span_value = sum_std + length. So we look for sum_std = value - length.
+      const target = isKolel ? value - length : value;
+      if (target < 0) continue;
+      const lastStart = N - length;
+      for (let start = 0; start <= lastStart; start++) {
+        if (cs[start + length] - cs[start] === target) {
+          total++;
+          matches.push({
+            verse: v,
+            wordStart: start,
+            wordEnd: start + length - 1,
+            spanWordCount: length,
+          });
+        }
+      }
+    }
   }
-  countStmt.free();
 
-  // Then: fetch a page of matches.
-  const dataSql = `
-    SELECT
-      s.word_start  AS word_start,
-      s.word_end    AS word_end,
-      s.word_count  AS span_word_count,
-      v.text_nikkud AS text_nikkud,
-      v.text_consonant AS text_consonant,
-      v.word_count  AS verse_word_count,
-      v.chapter     AS chapter,
-      v.verse       AS verse,
-      b.name_he     AS book_name_he,
-      b.name_en     AS book_name_en,
-      b.section     AS section,
-      b.order_idx   AS order_idx
-    FROM spans s
-    JOIN verses v ON v.id = s.verse_id
-    JOIN books b ON b.id = v.book_id
-    WHERE ${where}
-    ORDER BY s.word_count ASC, b.order_idx ASC, v.chapter ASC, v.verse ASC, s.word_start ASC
-    LIMIT ?
-  `;
-  const positionalData = positionalCountSql; // not actually used; just clarity
-  void positionalData;
-
-  const dataStmt = db.prepare(
-    dataSql
-      .replace(":value", "?")
-      .replace(":minW", "?")
-      .replace(":maxW", "?")
+  // Same ordering as the old SQL: shortest spans first, then canonical book order.
+  matches.sort(
+    (a, b) =>
+      a.spanWordCount - b.spanWordCount ||
+      a.verse.orderIdx - b.verse.orderIdx ||
+      a.verse.chapter - b.verse.chapter ||
+      a.verse.verse - b.verse.verse ||
+      a.wordStart - b.wordStart,
   );
-  dataStmt.bind([...positional, limit]);
 
-  const results: SearchResult[] = [];
-  while (dataStmt.step()) {
-    const r = dataStmt.getAsObject() as Record<string, string | number>;
-    results.push({
-      bookNameHe: String(r.book_name_he),
-      bookNameEn: String(r.book_name_en),
-      section: r.section as Section,
-      chapter: Number(r.chapter),
-      verse: Number(r.verse),
-      textNikkud: String(r.text_nikkud),
-      textConsonant: String(r.text_consonant),
-      verseWordCount: Number(r.verse_word_count),
-      wordStart: Number(r.word_start),
-      wordEnd: Number(r.word_end),
-      spanWordCount: Number(r.span_word_count),
-    });
+  const page = matches.slice(0, limit).map((m): SearchResult => ({
+    bookNameHe: m.verse.bookNameHe,
+    bookNameEn: m.verse.bookNameEn,
+    section: m.verse.section,
+    chapter: m.verse.chapter,
+    verse: m.verse.verse,
+    textNikkud: m.verse.textNikkud,
+    textConsonant: m.verse.textConsonant,
+    verseWordCount: m.verse.wordCount,
+    wordStart: m.wordStart,
+    wordEnd: m.wordEnd,
+    spanWordCount: m.spanWordCount,
+  }));
+
+  return { total, results: page };
+}
+
+function pickCumsum(v: VerseEntry, method: GematriaMethod): Int32Array {
+  switch (method) {
+    case "sofit": return v.csSofit;
+    case "katan": return v.csKatan;
+    case "standard":
+    case "kolel":
+    default:      return v.csStd;
   }
-  dataStmt.free();
+}
 
-  return { total, results };
+function pickSpanValue(v: VerseEntry, start: number, length: number, method: GematriaMethod): number {
+  const cs = pickCumsum(v, method);
+  const std = cs[start + length] - cs[start];
+  return method === "kolel" ? std + length : std;
 }

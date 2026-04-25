@@ -11,7 +11,9 @@ const IDB_STORE = "files";
 const IDB_KEY = "tanakh_gematria.sqlite";
 const IDB_VERSION_KEY = "tanakh_gematria.version";
 // Bump if the .sqlite.gz schema changes — invalidates client cache.
-const DB_VERSION = "v1";
+// v2: dropped the precomputed `spans` table; per-word index is now computed
+// in JS after load (see lib/gematriaIndex.ts).
+const DB_VERSION = "v2";
 
 type ProgressCallback = (info: { stage: string; loaded?: number; total?: number }) => void;
 

@@ -1,9 +1,11 @@
 """Build tanakh_gematria.sqlite from Sefaria-Export.
 
 Downloads the merged Hebrew JSON for every book in BOOKS, parses each verse,
-computes four gematria values for every contiguous word-span (capped at
-MAX_SPAN_WORDS), and writes everything to a single SQLite file plus a gzipped
-copy ready to ship in /public.
+and writes a tiny SQLite file containing only books + verses (consonant text,
+display text, word count). Per-word gematria values and per-span sums are
+computed *on the client* at load time — no precomputed span table here, so the
+DB stays small (~3-5 MB) and arbitrarily long word-spans can be matched at
+query time.
 
 Run from the repo root:
     python data-build/build_index.py
@@ -35,7 +37,6 @@ SQLITE_PATH = PUBLIC_DIR / "tanakh_gematria.sqlite"
 SQLITE_GZ_PATH = PUBLIC_DIR / "tanakh_gematria.sqlite.gz"
 
 GCS_BASE = "https://storage.googleapis.com/sefaria-export/json/Tanakh"
-MAX_SPAN_WORDS = 12  # cap span length to keep the index manageable
 
 # ---------------------------------------------------------------------------
 # Hebrew text utilities
@@ -46,10 +47,7 @@ NIKKUD_RE = re.compile(r"[֑-ׇ]")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 CURLY_MARKER_RE = re.compile(r"\{[^}]+\}")
 WHITESPACE_RE = re.compile(r"\s+")
-SOF_PASUK = "׃"  # ׃
-MAQAF = "־"      # ־ (already covered by NIKKUD_RE range, but we keep
-                       #    maqaf as a word-binder so words like על־פני stay
-                       #    one token; it gets stripped along with nikkud).
+SOF_PASUK = "׃"
 
 
 def clean_display(raw: str) -> str:
@@ -71,8 +69,8 @@ def clean_consonants(raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Native gematria (fast — no per-letter dict overhead per call needed since
-# we precompute per-word values once and then sum across spans).
+# Native gematria — kept here only for the Genesis 1:1 build-time sanity check.
+# Runtime gematria lives in the TS client.
 # ---------------------------------------------------------------------------
 
 LETTER_STD = {
@@ -81,20 +79,10 @@ LETTER_STD = {
     "ק": 100, "ר": 200, "ש": 300, "ת": 400,
     "ך": 20, "ם": 40, "ן": 50, "ף": 80, "ץ": 90,
 }
-LETTER_SOFIT = {
-    **LETTER_STD,
-    "ך": 500, "ם": 600, "ן": 700, "ף": 800, "ץ": 900,
-}
-LETTER_KATAN = {
-    "א": 1, "ב": 2, "ג": 3, "ד": 4, "ה": 5, "ו": 6, "ז": 7, "ח": 8, "ט": 9,
-    "י": 1, "כ": 2, "ל": 3, "מ": 4, "נ": 5, "ס": 6, "ע": 7, "פ": 8, "צ": 9,
-    "ק": 1, "ר": 2, "ש": 3, "ת": 4,
-    "ך": 2, "ם": 4, "ן": 5, "ף": 8, "ץ": 9,
-}
 
 
-def gem(table: dict, word: str) -> int:
-    return sum(table.get(c, 0) for c in word)
+def gem_std(word: str) -> int:
+    return sum(LETTER_STD.get(c, 0) for c in word)
 
 
 # ---------------------------------------------------------------------------
@@ -159,18 +147,6 @@ def make_schema(conn: sqlite3.Connection) -> None:
             word_count      INTEGER NOT NULL,
             UNIQUE(book_id, chapter, verse)
         );
-
-        CREATE TABLE spans (
-            id          INTEGER PRIMARY KEY,
-            verse_id    INTEGER NOT NULL REFERENCES verses(id),
-            word_start  INTEGER NOT NULL,
-            word_end    INTEGER NOT NULL,
-            word_count  INTEGER NOT NULL,
-            value_std   INTEGER NOT NULL,
-            value_sofit INTEGER NOT NULL,
-            value_katan INTEGER NOT NULL,
-            value_kolel INTEGER NOT NULL
-        );
     """)
 
 
@@ -184,7 +160,7 @@ def build() -> None:
 
     cur = conn.cursor()
     total_verses = 0
-    total_spans = 0
+    total_words = 0
     gen_1_1_std: int | None = None
 
     for name_en, name_he, section, order_idx in BOOKS:
@@ -199,8 +175,8 @@ def build() -> None:
 
         chapters = data.get("text", [])
         verse_rows: list[tuple] = []
-        span_rows: list[tuple] = []
-        verse_id_counter = total_verses  # we'll assign sequential ids per insert below
+        verse_id_counter = total_verses
+        book_words = 0
 
         for chapter_idx, chapter in enumerate(chapters, start=1):
             for verse_idx, raw in enumerate(chapter, start=1):
@@ -212,17 +188,6 @@ def build() -> None:
                     continue
 
                 cons_words = consonants.split(" ")
-                disp_words = display.split(" ")
-                # Word counts must match so client-side highlight indexing is correct.
-                # If they ever diverge (HTML weirdness), skip the verse rather than
-                # producing misaligned spans.
-                if len(cons_words) != len(disp_words):
-                    # Fallback: align by recomputing display words against a
-                    # nikkud-stripped variant of the display. Simplest: use the
-                    # consonants word_count and reconstruct display as-is.
-                    # In practice this should rarely fire.
-                    pass
-
                 word_count = len(cons_words)
                 if word_count == 0:
                     continue
@@ -232,61 +197,27 @@ def build() -> None:
                 verse_rows.append(
                     (verse_id, book_id, chapter_idx, verse_idx, consonants, display, word_count)
                 )
+                book_words += word_count
 
                 # Capture Genesis 1:1 standard gematria for sanity check.
                 if order_idx == 1 and chapter_idx == 1 and verse_idx == 1:
-                    gen_1_1_std = sum(gem(LETTER_STD, w) for w in cons_words)
-
-                # Per-word precomputed values + cumulative sums for O(1) span sums.
-                w_std = [gem(LETTER_STD, w) for w in cons_words]
-                w_sof = [gem(LETTER_SOFIT, w) for w in cons_words]
-                w_kat = [gem(LETTER_KATAN, w) for w in cons_words]
-
-                cs_std = [0] * (word_count + 1)
-                cs_sof = [0] * (word_count + 1)
-                cs_kat = [0] * (word_count + 1)
-                for i in range(word_count):
-                    cs_std[i + 1] = cs_std[i] + w_std[i]
-                    cs_sof[i + 1] = cs_sof[i] + w_sof[i]
-                    cs_kat[i + 1] = cs_kat[i] + w_kat[i]
-
-                cap = min(word_count, MAX_SPAN_WORDS)
-                for length in range(1, cap + 1):
-                    for start in range(0, word_count - length + 1):
-                        end = start + length - 1
-                        v_std = cs_std[end + 1] - cs_std[start]
-                        v_sof = cs_sof[end + 1] - cs_sof[start]
-                        v_kat = cs_kat[end + 1] - cs_kat[start]
-                        v_kol = v_std + length
-                        span_rows.append(
-                            (verse_id, start, end, length, v_std, v_sof, v_kat, v_kol)
-                        )
+                    gen_1_1_std = sum(gem_std(w) for w in cons_words)
 
         total_verses = verse_id_counter
+        total_words += book_words
 
-        # Bulk insert per book.
         cur.executemany(
             "INSERT INTO verses (id, book_id, chapter, verse, text_consonant, text_nikkud, word_count) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             verse_rows,
         )
-        cur.executemany(
-            "INSERT INTO spans (verse_id, word_start, word_end, word_count, value_std, value_sofit, value_katan, value_kolel) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            span_rows,
-        )
-        total_spans += len(span_rows)
-        print(f"        verses: {len(verse_rows):>5}  spans: {len(span_rows):>7}", flush=True)
+        print(f"        verses: {len(verse_rows):>5}  words: {book_words:>6}", flush=True)
         conn.commit()
 
     print("Creating indexes...", flush=True)
     cur.executescript("""
-        CREATE INDEX idx_verses_ref   ON verses(book_id, chapter, verse);
-        CREATE INDEX idx_spans_verse  ON spans(verse_id);
-        CREATE INDEX idx_spans_std    ON spans(value_std);
-        CREATE INDEX idx_spans_sofit  ON spans(value_sofit);
-        CREATE INDEX idx_spans_katan  ON spans(value_katan);
-        CREATE INDEX idx_spans_kolel  ON spans(value_kolel);
+        CREATE INDEX idx_verses_ref  ON verses(book_id, chapter, verse);
+        CREATE INDEX idx_verses_book ON verses(book_id);
     """)
     conn.commit()
 
@@ -305,7 +236,7 @@ def build() -> None:
     print("\n=== Sanity checks ===")
     print(f"Books:  {len(BOOKS)} (expected 39 individual books = 24 traditional)")
     print(f"Verses: {total_verses}")
-    print(f"Spans:  {total_spans}")
+    print(f"Words:  {total_words}")
     print(f"Gen 1:1 standard gematria = {gen_1_1_std} (expected 2701)")
     raw_size = SQLITE_PATH.stat().st_size / 1024 / 1024
     gz_size = SQLITE_GZ_PATH.stat().st_size / 1024 / 1024
@@ -314,9 +245,6 @@ def build() -> None:
 
     assert len(BOOKS) == 39, f"expected 39 books, got {len(BOOKS)}"
     assert gen_1_1_std == 2701, f"Genesis 1:1 must equal 2701, got {gen_1_1_std}"
-    # Total verses in the Tanakh is traditionally 23,203 (Masoretic). Sefaria's
-    # text may differ slightly by a few verses depending on chapter splits, so
-    # we check a tolerance.
     assert 23000 <= total_verses <= 23500, f"verse count {total_verses} outside expected range"
     print("\nAll sanity checks passed ✓")
 
