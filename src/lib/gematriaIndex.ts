@@ -102,7 +102,7 @@ export function buildIndex(db: Database): GematriaIndex {
 
   while (stmt.step()) {
     const r = stmt.getAsObject() as Record<string, string | number>;
-    const cons = String(r.text_consonant);
+    const cons = sanitizeHebrewText(String(r.text_consonant));
     const words = cons.split(" ");
     const letterCount = countHebrewLetters(cons);
     totalLetters += letterCount;
@@ -113,7 +113,7 @@ export function buildIndex(db: Database): GematriaIndex {
       chapter: Number(r.chapter),
       verse: Number(r.verse),
       textConsonant: cons,
-      textNikkud: String(r.text_nikkud),
+      textNikkud: sanitizeHebrewText(String(r.text_nikkud)),
       wordCount: Number(r.word_count),
       bookNameHe: String(r.book_name_he),
       bookNameEn: String(r.book_name_en),
@@ -206,6 +206,30 @@ function countHebrewLetters(s: string): number {
     if (idx >= 0 && idx < HEB_LEN) n++;
   }
   return n;
+}
+
+// The shipped SQLite was built before the Python pipeline decoded HTML
+// entities, so verses still contain literal "&nbsp;" / "&thinsp;" sequences
+// that Sefaria uses for poetry-style spacing. Decode them and collapse runs
+// of whitespace to a single regular space so they render as text, not markup.
+const HTML_ENTITY_RE = /&(nbsp|thinsp|ensp|emsp|amp|quot|#39|lt|gt);/g;
+const ENTITY_MAP: Record<string, string> = {
+  nbsp: " ",
+  thinsp: " ",
+  ensp: " ",
+  emsp: " ",
+  amp: "&",
+  quot: '"',
+  "#39": "'",
+  lt: "<",
+  gt: ">",
+};
+
+function sanitizeHebrewText(s: string): string {
+  return s
+    .replace(HTML_ENTITY_RE, (_, name) => ENTITY_MAP[name] ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // Test helper: drop the cached index so subsequent buildIndex() calls rebuild.

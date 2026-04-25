@@ -15,6 +15,7 @@ or:
 from __future__ import annotations
 
 import gzip
+import html
 import json
 import os
 import re
@@ -54,6 +55,9 @@ def clean_display(raw: str) -> str:
     """Cleaned for on-screen display: keep nikkud, drop HTML and editorial markers."""
     text = HTML_TAG_RE.sub("", raw)
     text = CURLY_MARKER_RE.sub("", text)
+    # Sefaria text contains literal HTML entities (e.g. &nbsp;, &thinsp;) used
+    # for poetry-style spacing; decode them so they don't reach the UI as text.
+    text = html.unescape(text)
     text = WHITESPACE_RE.sub(" ", text).strip()
     return text
 
@@ -62,6 +66,7 @@ def clean_consonants(raw: str) -> str:
     """Cleaned for gematria: strip HTML, editorial markers, nikkud, ta'amim, sof-pasuk."""
     text = HTML_TAG_RE.sub("", raw)
     text = CURLY_MARKER_RE.sub("", text)
+    text = html.unescape(text)
     text = NIKKUD_RE.sub("", text)
     text = text.replace(SOF_PASUK, "")
     text = WHITESPACE_RE.sub(" ", text).strip()
