@@ -153,6 +153,130 @@ ok("scan(20964) finishes under 1s", scanMs < 1000);
 const rSof = scan(913, "sofit", 1, 8);
 ok(`sofit value 913 small-span matches (${rSof.total})`, rSof.total >= 0);
 
+// ---------------------------------------------------------------------------
+// Letter-sequence search: build the global letter cumsum and verify both
+// within-verse and cross-verse modes via the same two-pointer algorithm the
+// production search uses.
+// ---------------------------------------------------------------------------
+
+// Pre-count to size Int32Arrays exactly.
+let totalLetters = 0;
+for (const v of idx) {
+  // Re-derive letter count from the (already cached) cons text.
+  let L = 0;
+  // We didn't store cons here; refetch via verse map. For the smoke test,
+  // simplest to store letterCount during the next pass — but we already
+  // discarded text. Pull it again from the DB by chapter/verse/book.
+  void L;
+  totalLetters += 0;
+}
+
+// Re-pull verses with text_consonant to build letter cumsums.
+const stmt2 = db.prepare(`
+  SELECT v.id, v.text_consonant, b.section, b.order_idx, v.chapter, v.verse, b.name_en
+  FROM verses v JOIN books b ON b.id = v.book_id
+  ORDER BY b.order_idx, v.chapter, v.verse
+`);
+const verseRows = [];
+totalLetters = 0;
+while (stmt2.step()) {
+  const r = stmt2.getAsObject();
+  const cons = String(r.text_consonant);
+  let L = 0;
+  for (let i = 0; i < cons.length; i++) {
+    const c = cons.charCodeAt(i) - HEB_BASE;
+    if (c >= 0 && c < HEB_LEN) L++;
+  }
+  verseRows.push({
+    bookEn: r.name_en, chapter: r.chapter, verse: r.verse,
+    section: r.section, orderIdx: r.order_idx,
+    cons, letterCount: L, firstLetterIdx: totalLetters,
+  });
+  totalLetters += L;
+}
+stmt2.free();
+
+const tLet = Date.now();
+const globalCsStd = new Int32Array(totalLetters + 1);
+const globalCsSofit = new Int32Array(totalLetters + 1);
+const letterToVerseIdx = new Int32Array(totalLetters);
+let cursor = 0, runStd = 0, runSof = 0;
+for (let v = 0; v < verseRows.length; v++) {
+  const cons = verseRows[v].cons;
+  for (let p = 0; p < cons.length; p++) {
+    const ci = cons.charCodeAt(p) - HEB_BASE;
+    if (ci < 0 || ci >= HEB_LEN) continue;
+    runStd += STD[ci];
+    runSof += SOFIT[ci];
+    cursor++;
+    globalCsStd[cursor] = runStd;
+    globalCsSofit[cursor] = runSof;
+    letterToVerseIdx[cursor - 1] = v;
+  }
+}
+console.log(`   letter-stream cumsum built in ${Date.now() - tLet}ms over ${totalLetters} letters`);
+ok(`letter-stream cumsum length matches (${cursor} = ${totalLetters})`, cursor === totalLetters);
+
+function letterScan({ value, method, crossVerse, minLetters, maxLetters }) {
+  const cs = method === "sofit" ? globalCsSofit : globalCsStd;
+  const target = method === "kolel" ? value - 1 : value;
+  let total = 0, firstHit = null;
+  if (crossVerse) {
+    const N = cs.length - 1;
+    let i = 0;
+    for (let k = 1; k <= N; k++) {
+      while (cs[k] - cs[i] > target) i++;
+      if (i < k && cs[k] - cs[i] === target) {
+        const len = k - i;
+        if (len >= minLetters && len <= maxLetters) {
+          total++;
+          if (!firstHit) firstHit = { i, k, len };
+        }
+      }
+    }
+  } else {
+    for (let v = 0; v < verseRows.length; v++) {
+      const base = verseRows[v].firstLetterIdx;
+      const L = verseRows[v].letterCount;
+      if (L === 0) continue;
+      let i = base;
+      for (let k = base + 1; k <= base + L; k++) {
+        while (cs[k] - cs[i] > target) i++;
+        if (i < k && cs[k] - cs[i] === target) {
+          const len = k - i;
+          if (len >= minLetters && len <= maxLetters) {
+            total++;
+            if (!firstHit) firstHit = { v, start: i - base, end: k - 1 - base, len };
+          }
+        }
+      }
+    }
+  }
+  return { total, firstHit };
+}
+
+// 8. Within-verse: 2701 over 28 letters should hit Genesis 1:1 in full.
+const lWithin2701 = letterScan({ value: 2701, method: "standard", crossVerse: false, minLetters: 28, maxLetters: 28 });
+ok(`letter within-verse 2701 (28 letters) hits ≥1 (${lWithin2701.total})`, lWithin2701.total >= 1);
+
+// 9. Within-verse 26 (יהוה) — 4 consecutive letters somewhere.
+const l26 = letterScan({ value: 26, method: "standard", crossVerse: false, minLetters: 4, maxLetters: 4 });
+ok(`letter within-verse 26 (4 letters) finds matches (${l26.total})`, l26.total > 0);
+
+// 10. Cross-verse 20964 — must terminate quickly even at maxLetters=99.
+const tCv = Date.now();
+const lCv = letterScan({ value: 20964, method: "standard", crossVerse: true, minLetters: 1, maxLetters: 99 });
+const cvMs = Date.now() - tCv;
+console.log(`   cross-verse scan(20964) -> total=${lCv.total} in ${cvMs}ms`);
+ok("cross-verse scan(20964) under 200ms", cvMs < 200);
+
+// 11. Cross-verse 20964 sofit — same value via final-form letters.
+const tCvSof = Date.now();
+const lCvSof = letterScan({ value: 20964, method: "sofit", crossVerse: true, minLetters: 1, maxLetters: 99 });
+const cvSofMs = Date.now() - tCvSof;
+console.log(`   cross-verse sofit(20964) -> total=${lCvSof.total} in ${cvSofMs}ms`);
+ok("cross-verse sofit(20964) under 200ms", cvSofMs < 200);
+
 db.close();
 
 if (exitOk) {
