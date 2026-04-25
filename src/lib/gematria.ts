@@ -69,6 +69,58 @@ export function gematriaKolel(consonants: string): number {
   return gematriaStandard(consonants) + wordCount(consonants);
 }
 
+// ---------------------------------------------------------------------------
+// Fast per-charcode tables for index building.
+//
+// Hebrew letters live in U+05D0..U+05EA. Indexing into a Uint16Array by
+// (charCode - 0x05D0) is a single bounds-checked load, much faster than
+// `obj[char]`. Used by the in-memory index that powers search.
+// ---------------------------------------------------------------------------
+
+const HEB_BASE = 0x05D0;
+const HEB_LEN = 0x05EA - 0x05D0 + 1; // 27 codepoints incl. final forms
+
+function buildCharTable(map: Record<string, number>): Uint16Array {
+  const arr = new Uint16Array(HEB_LEN);
+  for (const [ch, v] of Object.entries(map)) {
+    const idx = ch.charCodeAt(0) - HEB_BASE;
+    if (idx >= 0 && idx < HEB_LEN) arr[idx] = v;
+  }
+  return arr;
+}
+
+export const STD_TABLE = buildCharTable(STD);
+export const SOFIT_TABLE = buildCharTable(SOFIT);
+export const KATAN_TABLE = buildCharTable(KATAN);
+
+/** Per-word standard gematria via the fast table — used by the index builder. */
+export function wordValueStd(word: string): number {
+  let sum = 0;
+  for (let i = 0; i < word.length; i++) {
+    const idx = word.charCodeAt(i) - HEB_BASE;
+    if (idx >= 0 && idx < HEB_LEN) sum += STD_TABLE[idx];
+  }
+  return sum;
+}
+
+export function wordValueSofit(word: string): number {
+  let sum = 0;
+  for (let i = 0; i < word.length; i++) {
+    const idx = word.charCodeAt(i) - HEB_BASE;
+    if (idx >= 0 && idx < HEB_LEN) sum += SOFIT_TABLE[idx];
+  }
+  return sum;
+}
+
+export function wordValueKatan(word: string): number {
+  let sum = 0;
+  for (let i = 0; i < word.length; i++) {
+    const idx = word.charCodeAt(i) - HEB_BASE;
+    if (idx >= 0 && idx < HEB_LEN) sum += KATAN_TABLE[idx];
+  }
+  return sum;
+}
+
 export interface GematriaValues {
   standard: number;
   sofit: number;

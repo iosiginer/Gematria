@@ -16,9 +16,11 @@ export function LoadingBar({ stage, loaded, total }: Props) {
         ? "מפענח את הקובץ…"
         : stage === "open"
           ? "פותח את האינדקס…"
-          : stage === "cache"
-            ? "טוען מהמטמון…"
-            : "מתחיל…";
+          : stage === "index"
+            ? "בונה אינדקס גימטריה…"
+            : stage === "cache"
+              ? "טוען מהמטמון…"
+              : "מתחיל…";
 
   return (
     <div
