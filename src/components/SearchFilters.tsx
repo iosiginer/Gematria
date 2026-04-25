@@ -70,12 +70,13 @@ export function SearchFiltersBar({ filters, onChange }: Props) {
               max={filters.maxLetters}
               onChange={(n) => onChange({ ...filters, minLetters: n })}
               label="מינימום"
+              editable
             />
             <span className="text-[var(--muted)]">–</span>
             <NumberStepper
               value={filters.maxLetters}
               min={filters.minLetters}
-              max={99}
+              max={Number.MAX_SAFE_INTEGER}
               onChange={(n) => onChange({ ...filters, maxLetters: n })}
               label="מקסימום"
               editable
@@ -90,12 +91,13 @@ export function SearchFiltersBar({ filters, onChange }: Props) {
               max={filters.maxWords}
               onChange={(n) => onChange({ ...filters, minWords: n })}
               label="מינימום"
+              editable
             />
             <span className="text-[var(--muted)]">–</span>
             <NumberStepper
               value={filters.maxWords}
               min={filters.minWords}
-              max={99}
+              max={Number.MAX_SAFE_INTEGER}
               onChange={(n) => onChange({ ...filters, maxWords: n })}
               label="מקסימום"
               editable
@@ -197,7 +199,7 @@ function NumberStepper({
             const n = parseInt(e.target.value, 10);
             onChange(clamp(Number.isFinite(n) ? n : value));
           }}
-          className="w-10 bg-transparent text-center tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          className="w-14 bg-transparent text-center tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           aria-label={`${label} ערך`}
         />
       ) : (
