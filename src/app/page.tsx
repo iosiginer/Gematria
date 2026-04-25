@@ -17,8 +17,12 @@ import { searchSpans } from "@/lib/search";
 import type { GematriaMethod, SearchFilters, SearchResult } from "@/types";
 
 const DEFAULT_FILTERS: SearchFilters = {
+  searchMode: "words",
   minWords: 1,
   maxWords: 8,
+  minLetters: 2,
+  maxLetters: 30,
+  crossVerse: false,
   sections: ["Torah", "Prophets", "Writings"],
   wholeVerseOnly: false,
 };
@@ -45,9 +49,18 @@ export default function Home() {
     const params = new URLSearchParams(window.location.search);
     const t = params.get("text");
     const m = params.get("method") as GematriaMethod | null;
+    const mode = params.get("mode");
+    const cv = params.get("cv");
     if (t) setInput(t);
     if (m && (["standard", "sofit", "katan", "kolel"] as const).includes(m)) {
       setMethod(m);
+    }
+    if (mode === "letters" || cv === "1") {
+      setFilters((f) => ({
+        ...f,
+        searchMode: "letters",
+        crossVerse: cv === "1" ? true : f.crossVerse,
+      }));
     }
   }, []);
 
@@ -57,10 +70,12 @@ export default function Home() {
     const params = new URLSearchParams();
     if (input) params.set("text", input);
     if (method !== "standard") params.set("method", method);
+    if (filters.searchMode === "letters") params.set("mode", "letters");
+    if (filters.crossVerse) params.set("cv", "1");
     const qs = params.toString();
     const url = qs ? `?${qs}` : window.location.pathname;
     window.history.replaceState(null, "", url);
-  }, [input, method]);
+  }, [input, method, filters.searchMode, filters.crossVerse]);
 
   const computedValue = useMemo(() => {
     if (!input.trim()) return null;
@@ -113,7 +128,17 @@ export default function Home() {
     if (!searched || !index || computedValue === null) return;
     runSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [method, filters.minWords, filters.maxWords, filters.sections.join(","), filters.wholeVerseOnly]);
+  }, [
+    method,
+    filters.searchMode,
+    filters.minWords,
+    filters.maxWords,
+    filters.minLetters,
+    filters.maxLetters,
+    filters.crossVerse,
+    filters.sections.join(","),
+    filters.wholeVerseOnly,
+  ]);
 
   const showCalculatedNote = input && !isNumericInput(input);
 
@@ -153,6 +178,11 @@ export default function Home() {
             <div className="mt-2 text-sm text-[var(--muted)]">
               שיטה: {METHOD_LABELS[method].he}
             </div>
+            {filters.searchMode === "letters" && method === "kolel" && (
+              <div className="mt-2 rounded-md bg-[var(--bg)] px-3 py-2 text-xs text-[var(--muted)]">
+                במצב רצף אותיות, "עם הכולל" מחושב כמספר ההכרחי + 1 (הרצף כביטוי אחד).
+              </div>
+            )}
           </div>
         )}
 
