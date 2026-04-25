@@ -1,0 +1,3 @@
+# Only stdlib is required — kept here for completeness and so contributors
+# can `pip install -r requirements.txt` to add optional cross-checks.
+# tqdm is optional; the script uses simple print logging by default.

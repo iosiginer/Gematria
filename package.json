@@ -1,0 +1,31 @@
+{
+  "name": "tanakh-gematria",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/copy-sql-wasm.mjs && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "build:data": "python3 data-build/build_index.py",
+    "postinstall": "node scripts/copy-sql-wasm.mjs"
+  },
+  "dependencies": {
+    "next": "14.2.35",
+    "pako": "^2.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pako": "^2.0.3",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/sql.js": "^1.4.9",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5"
+  }
+}

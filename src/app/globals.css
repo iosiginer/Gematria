@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #faf7f2;
+  --ink: #1a1a1a;
+  --gold: #a37f37;
+  --deep: #1f3a5f;
+  --muted: #6b6357;
+  --paper: #ffffff;
+  --hairline: #e6dfd2;
+  --highlight: #f4e8c6;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-frank-ruhl), "Times New Roman", serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+input, textarea {
+  font-size: 16px; /* prevent iOS zoom-on-focus */
+}
+
+mark.match {
+  background: var(--highlight);
+  border-radius: 2px;
+  padding: 0 0.1em;
+  color: inherit;
+  box-shadow: 0 1px 0 rgba(163, 127, 55, 0.35);
+}
+
+/* Make tap targets comfortable on mobile */
+button, [role="button"], a.touch {
+  min-height: 44px;
+}
+
+/* Subtle ornamental separator */
+.divider {
+  height: 1px;
+  background: var(--hairline);
+}
