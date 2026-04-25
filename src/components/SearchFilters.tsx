@@ -14,6 +14,8 @@ const SECTIONS: { key: Section; label: string }[] = [
 ];
 
 export function SearchFiltersBar({ filters, onChange }: Props) {
+  const isLetters = filters.searchMode === "letters";
+
   function toggleSection(s: Section) {
     const exists = filters.sections.includes(s);
     const next = exists
@@ -22,28 +24,84 @@ export function SearchFiltersBar({ filters, onChange }: Props) {
     onChange({ ...filters, sections: next });
   }
 
+  function setMode(mode: "words" | "letters") {
+    onChange({ ...filters, searchMode: mode });
+  }
+
   return (
-    <div className="rounded-2xl border border-[var(--hairline)] bg-[var(--paper)] p-4 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-[var(--muted)]">מילים:</span>
-          <NumberStepper
-            value={filters.minWords}
-            min={1}
-            max={filters.maxWords}
-            onChange={(n) => onChange({ ...filters, minWords: n })}
-            label="מינימום"
-          />
-          <span className="text-[var(--muted)]">–</span>
-          <NumberStepper
-            value={filters.maxWords}
-            min={filters.minWords}
-            max={99}
-            onChange={(n) => onChange({ ...filters, maxWords: n })}
-            label="מקסימום"
-            editable
-          />
+    <div className="space-y-3 rounded-2xl border border-[var(--hairline)] bg-[var(--paper)] p-4 shadow-sm">
+      {/* Mode toggle */}
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-[var(--muted)]">חיפוש לפי:</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-[var(--hairline)]">
+          <button
+            type="button"
+            onClick={() => setMode("words")}
+            aria-pressed={!isLetters}
+            className={[
+              "px-3 py-1 transition-colors",
+              !isLetters ? "bg-[var(--deep)] text-white" : "hover:bg-[var(--bg)]",
+            ].join(" ")}
+          >
+            מילים
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("letters")}
+            aria-pressed={isLetters}
+            className={[
+              "px-3 py-1 transition-colors",
+              isLetters ? "bg-[var(--deep)] text-white" : "hover:bg-[var(--bg)]",
+            ].join(" ")}
+          >
+            רצף אותיות
+          </button>
         </div>
+      </div>
+
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        {/* Range stepper — words or letters depending on mode */}
+        {isLetters ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[var(--muted)]">אותיות:</span>
+            <NumberStepper
+              value={filters.minLetters}
+              min={1}
+              max={filters.maxLetters}
+              onChange={(n) => onChange({ ...filters, minLetters: n })}
+              label="מינימום"
+            />
+            <span className="text-[var(--muted)]">–</span>
+            <NumberStepper
+              value={filters.maxLetters}
+              min={filters.minLetters}
+              max={99}
+              onChange={(n) => onChange({ ...filters, maxLetters: n })}
+              label="מקסימום"
+              editable
+            />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[var(--muted)]">מילים:</span>
+            <NumberStepper
+              value={filters.minWords}
+              min={1}
+              max={filters.maxWords}
+              onChange={(n) => onChange({ ...filters, minWords: n })}
+              label="מינימום"
+            />
+            <span className="text-[var(--muted)]">–</span>
+            <NumberStepper
+              value={filters.maxWords}
+              min={filters.minWords}
+              max={99}
+              onChange={(n) => onChange({ ...filters, maxWords: n })}
+              label="מקסימום"
+              editable
+            />
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2" role="group" aria-label={"חלקי התנ\"ך"}>
           {SECTIONS.map((s) => {
@@ -66,15 +124,28 @@ export function SearchFiltersBar({ filters, onChange }: Props) {
           })}
         </div>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={filters.wholeVerseOnly}
-            onChange={(e) => onChange({ ...filters, wholeVerseOnly: e.target.checked })}
-            className="h-4 w-4 accent-[var(--deep)]"
-          />
-          פסוקים שלמים בלבד
-        </label>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={filters.wholeVerseOnly}
+              onChange={(e) => onChange({ ...filters, wholeVerseOnly: e.target.checked })}
+              className="h-4 w-4 accent-[var(--deep)]"
+            />
+            פסוקים שלמים בלבד
+          </label>
+          {isLetters && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filters.crossVerse}
+                onChange={(e) => onChange({ ...filters, crossVerse: e.target.checked })}
+                className="h-4 w-4 accent-[var(--deep)]"
+              />
+              חצה גבולות פסוקים
+            </label>
+          )}
+        </div>
       </div>
     </div>
   );
