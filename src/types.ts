@@ -54,3 +54,37 @@ export interface LetterMatch {
 }
 
 export type SearchResult = WordMatch | LetterMatch;
+
+// ---------------------------------------------------------------------------
+// Multi-sequence sum search ("find N separate spans whose values add to T")
+// ---------------------------------------------------------------------------
+
+// A combined match: N independent, non-overlapping spans whose gematria values
+// add up to the requested target. `members` holds the rendered sub-results in
+// canonical order (book, chapter, verse, position).
+export interface MultiSumMatch {
+  members: SearchResult[];
+  values: number[]; // value of each member, parallel to `members`
+  total: number;    // sum of values; equals the search target
+}
+
+// ---------------------------------------------------------------------------
+// "Scan all options" validation report
+// ---------------------------------------------------------------------------
+
+// One row of the validation report: a single (method × searchMode × crossVerse)
+// combination, with the total number of matches it produced for the target.
+export interface ScanComboResult {
+  method: GematriaMethod;
+  searchMode: SearchMode;
+  crossVerse: boolean;     // only meaningful for letter mode
+  total: number;
+  elapsedMs: number;
+}
+
+export interface ScanReport {
+  target: number;
+  combos: ScanComboResult[];
+  totalAcross: number;     // sum of `total` across every combo (matches anywhere)
+  elapsedMs: number;
+}

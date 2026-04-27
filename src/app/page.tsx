@@ -9,12 +9,22 @@ import { ResultsList } from "@/components/ResultsList";
 import { SearchFiltersBar } from "@/components/SearchFilters";
 import { LoadingBar } from "@/components/LoadingBar";
 import { AboutModal } from "@/components/AboutModal";
+import { ScanReportPanel } from "@/components/ScanReportPanel";
+import { MultiSumResultsList } from "@/components/MultiSumResultsList";
 
 import { isNumericInput, valueFor, METHOD_LABELS } from "@/lib/gematria";
 import { loadDatabase } from "@/lib/db";
 import { buildIndex, type GematriaIndex } from "@/lib/gematriaIndex";
 import { searchSpans } from "@/lib/search";
-import type { GematriaMethod, SearchFilters, SearchResult } from "@/types";
+import { scanAllOptions } from "@/lib/scanAllOptions";
+import { findMultiSum, type MultiSumOutcome } from "@/lib/multiSum";
+import type {
+  GematriaMethod,
+  ScanReport,
+  ScanComboResult,
+  SearchFilters,
+  SearchResult,
+} from "@/types";
 
 const DEFAULT_FILTERS: SearchFilters = {
   searchMode: "words",
@@ -42,6 +52,15 @@ export default function Home() {
   const [searched, setSearched] = useState(false);
   const [searching, setSearching] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+
+  const [scanReport, setScanReport] = useState<ScanReport | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [tupleN, setTupleN] = useState<2 | 3 | 4>(2);
+  const [multiSum, setMultiSum] = useState<MultiSumOutcome | null>(null);
+  const [multiSumQuery, setMultiSumQuery] = useState<
+    { method: GematriaMethod; target: number; N: number } | null
+  >(null);
+  const [multiSumLoading, setMultiSumLoading] = useState(false);
 
   // Hydrate state from URL query string on first mount.
   useEffect(() => {
@@ -122,6 +141,55 @@ export default function Home() {
       setSearching(false);
     }
   }, [computedValue, method, filters, ensureIndex]);
+
+  const runScanAll = useCallback(async () => {
+    if (computedValue === null || computedValue <= 0) return;
+    setScanning(true);
+    try {
+      const idx = await ensureIndex();
+      const report = scanAllOptions(idx, computedValue, filters);
+      setScanReport(report);
+    } catch {
+      // ensureIndex surfaces errors
+    } finally {
+      setScanning(false);
+    }
+  }, [computedValue, filters, ensureIndex]);
+
+  // Apply a chosen combo from the scan report: switch the live filters/method
+  // to that combination and re-run the regular search so its results show up.
+  const applyScanCombo = useCallback(
+    (combo: ScanComboResult) => {
+      setMethod(combo.method);
+      setFilters((f) => ({
+        ...f,
+        searchMode: combo.searchMode,
+        crossVerse: combo.crossVerse,
+      }));
+    },
+    [],
+  );
+
+  const runMultiSum = useCallback(async () => {
+    if (computedValue === null || computedValue <= 0) return;
+    setMultiSumLoading(true);
+    try {
+      const idx = await ensureIndex();
+      const outcome = findMultiSum(idx, {
+        target: computedValue,
+        N: tupleN,
+        method,
+        filters,
+        limit: 100,
+      });
+      setMultiSum(outcome);
+      setMultiSumQuery({ method, target: computedValue, N: tupleN });
+    } catch {
+      // ensureIndex surfaces errors
+    } finally {
+      setMultiSumLoading(false);
+    }
+  }, [computedValue, method, filters, tupleN, ensureIndex]);
 
   // If results are showing, re-run automatically when filters or method change.
   useEffect(() => {
@@ -224,6 +292,80 @@ export default function Home() {
           loading={searching}
           query={searched && computedValue !== null ? { method, value: computedValue } : null}
         />
+
+        {computedValue !== null && computedValue > 0 && (
+          <div className="space-y-3 rounded-2xl border border-[var(--hairline)] bg-[var(--paper)] p-4 shadow-sm">
+            <div className="text-sm font-medium text-[var(--deep)]">
+              כלים מתקדמים
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={runScanAll}
+                disabled={scanning || loading}
+                className="rounded-xl border border-[var(--hairline)] px-3 py-2 text-sm hover:border-[var(--gold)] disabled:opacity-50"
+              >
+                {scanning ? "סורק…" : "סרוק את כל האפשרויות"}
+              </button>
+
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-[var(--muted)]">צירוף רצפים:</span>
+                <div className="inline-flex overflow-hidden rounded-lg border border-[var(--hairline)]">
+                  {([2, 3, 4] as const).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setTupleN(n)}
+                      aria-pressed={tupleN === n}
+                      className={[
+                        "px-3 py-1 transition-colors",
+                        tupleN === n
+                          ? "bg-[var(--deep)] text-white"
+                          : "hover:bg-[var(--bg)]",
+                      ].join(" ")}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={runMultiSum}
+                  disabled={multiSumLoading || loading}
+                  className="rounded-xl border border-[var(--hairline)] px-3 py-2 hover:border-[var(--gold)] disabled:opacity-50"
+                >
+                  {multiSumLoading ? "מחפש…" : `חפש סכום של ${tupleN} רצפים`}
+                </button>
+              </div>
+            </div>
+
+            <p className="text-xs text-[var(--muted)]">
+              "סריקה" מציגה כמה התאמות יש בכל צירוף שיטה×מצב.
+              "צירוף רצפים" מחפש N רצפים נפרדים שסכומם = הערך המבוקש.
+            </p>
+          </div>
+        )}
+
+        {scanReport && (
+          <ScanReportPanel
+            report={scanReport}
+            onApply={applyScanCombo}
+            onClose={() => setScanReport(null)}
+          />
+        )}
+
+        {(multiSumLoading || multiSum) && (
+          <MultiSumResultsList
+            matches={multiSum?.matches ?? []}
+            total={multiSum?.total ?? 0}
+            truncated={multiSum?.truncated ?? false}
+            spanCount={multiSum?.spanCount ?? 0}
+            elapsedMs={multiSum?.elapsedMs ?? 0}
+            loading={multiSumLoading}
+            query={multiSumQuery}
+          />
+        )}
       </section>
 
       <footer className="mt-12 border-t border-[var(--hairline)] pt-6 text-sm text-[var(--muted)]">
