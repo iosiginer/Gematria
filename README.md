@@ -8,6 +8,14 @@ Runs entirely in the browser — no backend, no tracking.
   katan (מספר קטן), and im hakolel (עם הכולל).
 - **Searches every contiguous word-span** (up to 12 words) across the entire
   Tanakh — about 1.75 million spans pre-indexed.
+- **Letter-sequence search**, within a verse or across verse boundaries.
+- **"Scan all options"** — sweep every method × searchMode combination at once,
+  to see at a glance whether a target value is reachable anywhere.
+- **Multi-sequence sum search** — find N (currently 2, 3, or 4) separate
+  non-overlapping spans whose gematria values add up to the target. Useful
+  when no single span hits the target — for example, the largest single
+  word-span value anywhere in the Tanakh is 13639, so anything bigger is
+  reachable only as a sum.
 - **Static site**: a SQLite index ships with the app and is queried client-side
   via [`sql.js`](https://sql.js.org).
 - **Mobile-first**, RTL Hebrew typography (Frank Ruhl Libre + Heebo).
@@ -54,12 +62,18 @@ src/
 │   ├── ResultsList.tsx
 │   ├── SearchFilters.tsx
 │   ├── LoadingBar.tsx
-│   └── AboutModal.tsx
+│   ├── AboutModal.tsx
+│   ├── ScanReportPanel.tsx     # "scan all options" matrix
+│   └── MultiSumResultsList.tsx # N-tuple result cards
 ├── lib/
 │   ├── gematria.ts             # JS port of the Python gematria
 │   ├── hebrewNumerals.ts       # 1 → א׳, 15 → ט״ו, etc.
 │   ├── db.ts                   # sql.js + IndexedDB cache
-│   └── search.ts               # SQL query helpers
+│   ├── gematriaIndex.ts        # in-memory cumsum index
+│   ├── search.ts               # word/letter span search
+│   ├── enumerateSpans.ts       # candidate-span enumeration for multi-sum
+│   ├── multiSum.ts             # pair + N-sum search algorithm
+│   └── scanAllOptions.ts       # validation skill: 12-combo sweep
 └── types.ts
 ```
 

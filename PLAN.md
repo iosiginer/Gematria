@@ -262,3 +262,116 @@ Each result is a card showing:
 6. Results UI
 7. Filters
 8. Polish pass
+
+---
+
+## Phase 5 — Validation skill ("scan all options")
+
+**Goal:** when no single span matches the user's target value under their
+current settings, give them a one-click sweep across every method × searchMode
+combination so they know whether the target is reachable anywhere — and, if
+yes, where.
+
+**Combinations swept** (12 total, fixed):
+- 4 gematria methods (`standard`, `sofit`, `katan`, `kolel`)
+- × 3 modes: word, letter within-verse, letter cross-verse
+
+The user's filters (sections, length range, wholeVerseOnly) are kept fixed so
+the matrix compares apples to apples. Each cell calls the existing
+`searchSpans` with `limit=1` and only consumes the `total` count.
+
+**Module:** `src/lib/scanAllOptions.ts` → `scanAllOptions(index, target, filters)`
+returns a `ScanReport` with one `ScanComboResult` per combination.
+
+**UI:** `src/components/ScanReportPanel.tsx` renders the matrix as a 4×3
+grid. Cells with hits are clickable; clicking applies that combination back to
+the live filters/method so the regular results list re-runs against it.
+
+**Performance:** ~12 × 20–200 ms = 0.2–2 s on the cached index. Acceptable as
+an explicit, opt-in action.
+
+---
+
+## Phase 6 — Multi-sequence sum search ("N separate spans summing to T")
+
+**Motivation:** some target values cannot be hit by any single contiguous span
+in the Tanakh. Example: 20964 (a personal anniversary). The maximum standard
+gematria value of any single word-span in the entire Tanakh is **13639**
+(measured: see smoke-test.mjs), so any value beyond that is unreachable as a
+single span — but pair-sums can still hit it (smoke test finds Gen 17:23 +
+II Chronicles 22:11 = 7839 + 13125 = 20964).
+
+### Algorithm (N=2)
+
+```
+1. Enumerate all candidate spans whose value ≤ T-1, respecting the user's
+   length / section / mode filters. Each span is a SpanCandidate
+   { kind, verseIdx, start, end, length, value }.
+2. Bucket spans by value into Map<value, SpanCandidate[]>.
+3. For each distinct value v1 in ascending order, with v1 ≤ T/2:
+   - Let v2 = T - v1.
+   - For every (a, b) ∈ A_v1 × A_v2 with v1 ≤ v2 and a, b non-overlapping,
+     emit (a, b).
+4. Stop early when `limit` tuples have been emitted.
+```
+
+**Non-overlap rule:** spans from different verses are always considered
+non-overlapping. Same-verse spans of the same kind must not share positions.
+
+**Time/space:**
+- Span enumeration is O(M) where M is the number of candidate spans
+  (1.5–2 M for word mode, maxWords ≤ 12, across the whole Tanakh).
+- Bucket build is O(M). Memory O(M).
+- Pair emission is O(emitted) thanks to the canonical-order canonicalization
+  (each unordered pair is emitted exactly once) and the early `limit` cutoff.
+
+### Algorithm (general N)
+
+`runNSum(T, N, …, prefix)` peels one span off at a time and recurses. The
+non-decreasing-value invariant on the chosen spans (`v_i ≤ v_{i+1}`) prevents
+the same multiset being emitted N! times. The recursion bottoms out in
+`runPairSum` at N=2.
+
+### How hard is N ≥ 3?
+
+Let M be the number of candidate spans and T the target value. Both
+M and the number of distinct span values D are bounded by min(M, T).
+
+| N | Approach | Theoretical time | Practical for our M ≈ 1–2 M, T = 20964 |
+|---|----------|------------------|-----------------------------------------|
+| 2 | Hash bucket sweep | O(M + emitted) | ✅ trivially fast (≤ 0.5 s, see smoke test) |
+| 3 | Peel-off + 2-sum, or histogram convolution | O(D²) ≈ 4·10⁸ ops via histogram, or O(M · per-bucket) with peel-off | ✅ feasible — peel-off works in seconds with the standard `limit` early exit |
+| 4 | Meet-in-the-middle on pair-sum histogram | O(D²) for the pair-sum table + O(D²) lookup | ⚠️ feasible but heavy — pair-sum table can hold up to D² ≈ 4·10⁸ entries |
+| 5 | M.i.t.M. on pair × triple, or O(D³) convolution | O(D³) ≈ 9·10¹² | ❌ infeasible without further pruning (length cap, value-range cap, top-K pre-filter) |
+| 6+ | k-sum is ω-hard in general | O(D^⌈k/2⌉) | ❌ infeasible at this corpus size |
+
+**Why the peel-off form is cheap in practice:** the inner `v_i × N ≤ T` cutoff
+kills most branches early — the deepest level of the recursion only ever
+considers values in `[v_{N-1}, T - Σv_<N]`, a tiny window.
+
+**Result-count explosion:** even when the algorithm is fast, the *number* of
+valid tuples can be huge. The user-visible `limit` (default 100) is essential
+— without it, "all triples summing to 20964" can return millions of results.
+
+### What is NOT supported (and why)
+
+- **Letter cross-verse multi-sum** is intentionally skipped. The candidate
+  span count for cross-verse letter mode is essentially the entire two-pointer
+  trace over the global cumsum (~10⁶ spans even for a single value, so for the
+  full enumeration up to T-1 it's much larger). With M that big, the bucket
+  build alone is multi-gigabyte. If we ever want this, the path is to skip
+  enumeration entirely and run a "pair-sum on monotone cumsum" routine that
+  pairs up spans on the fly using two pairs of pointers — but that's a separate
+  algorithm. See `enumerateSpans.ts`.
+- **N ≥ 5 multi-sum**. The UI exposes N ∈ {2, 3, 4}; higher N would need
+  meaningful application-side pruning (e.g. "all four spans must be in Torah",
+  fixed length, etc.) before it's worth implementing.
+
+### Module / UI summary
+
+| Module | Path | Role |
+|--------|------|------|
+| Span enumeration | `src/lib/enumerateSpans.ts` | Walks the index, emits SpanCandidates capped at `valueCap`. Word and letter-within-verse modes. |
+| Multi-sum search | `src/lib/multiSum.ts` | Pair + N-sum core, returns `MultiSumOutcome` |
+| UI panel | `src/components/MultiSumResultsList.tsx` | Renders each tuple as a card with N highlighted sub-results |
+| Scan-all UI | `src/components/ScanReportPanel.tsx` | 4×3 matrix of `searchSpans` totals; click-to-apply |

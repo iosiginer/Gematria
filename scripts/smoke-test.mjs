@@ -277,6 +277,140 @@ const cvSofMs = Date.now() - tCvSof;
 console.log(`   cross-verse sofit(20964) -> total=${lCvSof.total} in ${cvSofMs}ms`);
 ok("cross-verse sofit(20964) under 200ms", cvSofMs < 200);
 
+// ---------------------------------------------------------------------------
+// 12. Multi-sequence sum: pair-sum (N=2) over word standard.
+//     Reproduces the algorithm in src/lib/multiSum.ts so this script stays
+//     dependency-free. The headline use case is finding pairs of word-spans
+//     whose values add to 20964 — a target that has zero single-span hits.
+// ---------------------------------------------------------------------------
+
+function enumerateWordSpansForPairs({ method, valueCap, minW, maxW }) {
+  const out = []; // { vIdx, start, length, value }
+  const isKolel = method === "kolel";
+  for (let v = 0; v < idx.length; v++) {
+    const ve = idx[v];
+    const cs = method === "sofit" ? ve.csSofit : ve.csStd;
+    const N = ve.n;
+    const hi = Math.min(maxW, N);
+    for (let length = minW; length <= hi; length++) {
+      const lastStart = N - length;
+      for (let s = 0; s <= lastStart; s++) {
+        const std = cs[s + length] - cs[s];
+        const value = isKolel ? std + length : std;
+        if (value <= 0 || value > valueCap) continue;
+        out.push({ vIdx: v, start: s, length, value });
+      }
+    }
+  }
+  return out;
+}
+
+function pairSumCount(target, method, minW, maxW, limit) {
+  const spans = enumerateWordSpansForPairs({ method, valueCap: target - 1, minW, maxW });
+  const byValue = new Map();
+  for (const s of spans) {
+    let bucket = byValue.get(s.value);
+    if (!bucket) byValue.set(s.value, (bucket = []));
+    bucket.push(s);
+  }
+  const distinct = [...byValue.keys()].sort((a, b) => a - b);
+  let emitted = 0;
+  let firstHit = null;
+  outer: for (const v1 of distinct) {
+    if (v1 * 2 > target) break;
+    const v2 = target - v1;
+    if (v2 < v1) continue;
+    if (!byValue.has(v2)) continue;
+    const A = byValue.get(v1);
+    const B = byValue.get(v2);
+    const sameBucket = v1 === v2;
+    if (sameBucket) {
+      for (let i = 0; i < A.length; i++) {
+        for (let j = i + 1; j < A.length; j++) {
+          if (A[i].vIdx === A[j].vIdx) {
+            const aE = A[i].start + A[i].length - 1;
+            const bE = A[j].start + A[j].length - 1;
+            if (A[i].start <= bE && A[j].start <= aE) continue;
+          }
+          if (!firstHit) firstHit = [A[i], A[j]];
+          emitted++;
+          if (emitted >= limit) break outer;
+        }
+      }
+    } else {
+      for (const a of A) {
+        for (const b of B) {
+          if (a.vIdx === b.vIdx) {
+            const aE = a.start + a.length - 1;
+            const bE = b.start + b.length - 1;
+            if (a.start <= bE && b.start <= aE) continue;
+          }
+          if (!firstHit) firstHit = [a, b];
+          emitted++;
+          if (emitted >= limit) break outer;
+        }
+      }
+    }
+  }
+  return { emitted, firstHit, spans: spans.length };
+}
+
+// Algorithm correctness: 5402 = 2 × 2701, so any two of the 37 Gen-1:1-style
+// 7-word matches form a valid pair. Use a small bucket to keep this fast.
+const tPairKnown = Date.now();
+const pair5402 = pairSumCount(5402, "standard", 7, 7, 50);
+const pairKnownMs = Date.now() - tPairKnown;
+console.log(
+  `   pair-sum(5402, std, 7 words) -> ${pair5402.emitted} pairs over ${pair5402.spans} spans in ${pairKnownMs}ms`,
+);
+ok(`pair-sum(5402) finds ≥1 pair (${pair5402.emitted})`, pair5402.emitted >= 1);
+if (pair5402.firstHit) {
+  const [a, b] = pair5402.firstHit;
+  ok(
+    `pair sums to 5402 (got ${a.value + b.value})`,
+    a.value + b.value === 5402,
+  );
+}
+
+// Headline use case: 20964. With word standard the maximum single-span value
+// in the Tanakh is 13639, so we need maxWords ≥ ~30 to make any pair feasible
+// (the half-way 10482 lies between 8734 and 12151 — reachable only with longer
+// spans). At maxWords=30 there are 83 distinct value-pairs that hit 20964.
+const tPair = Date.now();
+const pair20964 = pairSumCount(20964, "standard", 1, 30, 50);
+const pairMs = Date.now() - tPair;
+console.log(
+  `   pair-sum(20964, std, 1..30 words) -> ${pair20964.emitted} pairs over ${pair20964.spans} spans in ${pairMs}ms`,
+);
+ok(`pair-sum(20964, maxW=30) finds ≥1 pair (${pair20964.emitted})`, pair20964.emitted >= 1);
+ok("pair-sum(20964, maxW=30) under 30s", pairMs < 30000);
+if (pair20964.firstHit) {
+  const [a, b] = pair20964.firstHit;
+  const va = idx[a.vIdx], vb = idx[b.vIdx];
+  console.log(
+    `   sample pair: ${va.bookEn} ${va.chapter}:${va.verse} (start=${a.start}, len=${a.length}, val=${a.value})` +
+    ` + ${vb.bookEn} ${vb.chapter}:${vb.verse} (start=${b.start}, len=${b.length}, val=${b.value})` +
+    ` = ${a.value + b.value}`,
+  );
+  ok(
+    `pair sums to 20964 (got ${a.value + b.value})`,
+    a.value + b.value === 20964,
+  );
+}
+
+// Confirm the documented constraint: at the default maxWords=8, no pairs hit
+// 20964 (max 8-word value is 7666 < 10482). The UI should hint at this.
+const pair20964Tight = pairSumCount(20964, "standard", 1, 8, 1);
+ok(
+  `pair-sum(20964, maxW=8) returns 0 pairs (got ${pair20964Tight.emitted})`,
+  pair20964Tight.emitted === 0,
+);
+
+// 13. "Scan all options" reproduction: small values must hit at least one
+// combination. We just count word-mode standard for 376 (שלום).
+const scanShalom = scan(376, "standard", 1, 1).total;
+ok(`scan-all surrogate: word-std 376 has matches (${scanShalom})`, scanShalom > 0);
+
 db.close();
 
 if (exitOk) {
