@@ -8,6 +8,8 @@ import type {
   WordMatch,
 } from "@/types";
 import { toHebrewNumeral } from "@/lib/hebrewNumerals";
+import { sefariaUrl } from "@/lib/sefaria";
+import { SefariaLink } from "./SefariaLink";
 
 const HEB_BASE = 0x05D0;
 const HEB_LEN = 0x05EA - 0x05D0 + 1;
@@ -121,7 +123,7 @@ function TupleCard({ m }: { m: MultiSumMatch }) {
 
 function SubWord({ idx, r, value }: { idx: number; r: WordMatch; value: number }) {
   const ref = formatRef(r);
-  const sefariaUrl = `https://www.sefaria.org/${encodeURIComponent(r.bookNameEn.replace(/ /g, "_"))}.${r.chapter}.${r.verse}?lang=he`;
+  const url = sefariaUrl(r);
   const words = r.textNikkud.split(/\s+/);
   const before = words.slice(0, r.wordStart).join(" ");
   const matched = words.slice(r.wordStart, r.wordEnd + 1).join(" ");
@@ -130,16 +132,19 @@ function SubWord({ idx, r, value }: { idx: number; r: WordMatch; value: number }
     <li className="rounded-xl border border-[var(--hairline)] bg-[var(--bg)] p-3">
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <a
-          href={sefariaUrl}
+          href={url}
           target="_blank"
           rel="noreferrer noopener"
           className="font-sans font-semibold text-[var(--deep)] hover:underline"
         >
           {idx}. {ref}
         </a>
-        <span className="rounded-full bg-[var(--paper)] px-2 py-0.5 text-xs text-[var(--muted)]">
-          {value.toLocaleString("he-IL")} · {r.spanWordCount} מילים
-        </span>
+        <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+          <span className="rounded-full bg-[var(--paper)] px-2 py-0.5">
+            {value.toLocaleString("he-IL")} · {r.spanWordCount} מילים
+          </span>
+          <SefariaLink href={url} compact />
+        </div>
       </div>
       <p className="mt-2 font-serif text-lg leading-loose">
         {before && <span>{before} </span>}
@@ -153,22 +158,25 @@ function SubWord({ idx, r, value }: { idx: number; r: WordMatch; value: number }
 function SubLetter({ idx, r, value }: { idx: number; r: LetterMatch; value: number }) {
   const seg = r.segments[0];
   const ref = `${seg.bookNameHe} ${toHebrewNumeral(seg.chapter)}:${toHebrewNumeral(seg.verse)}`;
-  const sefariaUrl = `https://www.sefaria.org/${encodeURIComponent(seg.bookNameEn.replace(/ /g, "_"))}.${seg.chapter}.${seg.verse}?lang=he`;
+  const url = sefariaUrl(r);
   const range = mapLetterRangeToDisplay(seg.textNikkud, seg.letterStart, seg.letterEnd);
   return (
     <li className="rounded-xl border border-[var(--hairline)] bg-[var(--bg)] p-3">
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <a
-          href={sefariaUrl}
+          href={url}
           target="_blank"
           rel="noreferrer noopener"
           className="font-sans font-semibold text-[var(--deep)] hover:underline"
         >
           {idx}. {ref}
         </a>
-        <span className="rounded-full bg-[var(--paper)] px-2 py-0.5 text-xs text-[var(--muted)]">
-          {value.toLocaleString("he-IL")} · {r.spanLetterCount} אותיות
-        </span>
+        <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+          <span className="rounded-full bg-[var(--paper)] px-2 py-0.5">
+            {value.toLocaleString("he-IL")} · {r.spanLetterCount} אותיות
+          </span>
+          <SefariaLink href={url} compact />
+        </div>
       </div>
       <p className="mt-2 font-serif text-lg leading-loose">
         {seg.textNikkud.slice(0, range.startCharIdx)}
