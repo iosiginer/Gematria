@@ -3,6 +3,8 @@
 import { useState } from "react";
 import type { LetterMatch, LetterMatchSegment, SearchResult, WordMatch } from "@/types";
 import { toHebrewNumeral } from "@/lib/hebrewNumerals";
+import { sefariaUrl } from "@/lib/sefaria";
+import { SefariaLink } from "./SefariaLink";
 
 const HEB_BASE = 0x05D0;
 const HEB_LEN = 0x05EA - 0x05D0 + 1;
@@ -61,7 +63,7 @@ export function ResultsList({ results, total, loading, query }: Props) {
 
 function WordResultCard({ r }: { r: WordMatch }) {
   const ref = `${r.bookNameHe} ${toHebrewNumeral(r.chapter)}:${toHebrewNumeral(r.verse)}`;
-  const sefariaUrl = `https://www.sefaria.org/${encodeURIComponent(r.bookNameEn.replace(/ /g, "_"))}.${r.chapter}.${r.verse}?lang=he`;
+  const url = sefariaUrl(r);
 
   const words = r.textNikkud.split(/\s+/);
   const before = words.slice(0, r.wordStart).join(" ");
@@ -85,7 +87,7 @@ function WordResultCard({ r }: { r: WordMatch }) {
     <li className="rounded-2xl border border-[var(--hairline)] bg-[var(--paper)] p-4 shadow-sm transition hover:border-[var(--gold)]">
       <div className="flex items-start justify-between gap-3">
         <a
-          href={sefariaUrl}
+          href={url}
           target="_blank"
           rel="noreferrer noopener"
           className="font-sans text-sm font-semibold text-[var(--deep)] hover:underline"
@@ -103,6 +105,7 @@ function WordResultCard({ r }: { r: WordMatch }) {
           >
             {copied ? "הועתק" : "העתק"}
           </button>
+          <SefariaLink href={url} />
         </div>
       </div>
 
@@ -132,7 +135,7 @@ function LetterResultCard({ r }: { r: LetterMatch }) {
         first.bookNameEn === last.bookNameEn ? "" : `${last.bookNameHe} `
       }${toHebrewNumeral(last.chapter)}:${toHebrewNumeral(last.verse)}`
     : `${first.bookNameHe} ${toHebrewNumeral(first.chapter)}:${toHebrewNumeral(first.verse)}`;
-  const sefariaUrl = `https://www.sefaria.org/${encodeURIComponent(first.bookNameEn.replace(/ /g, "_"))}.${first.chapter}.${first.verse}?lang=he`;
+  const url = sefariaUrl(r);
 
   // Build the matched-letters consonant string (concatenating letters across segments).
   const consLetters = r.segments
@@ -154,7 +157,7 @@ function LetterResultCard({ r }: { r: LetterMatch }) {
     <li className="rounded-2xl border border-[var(--hairline)] bg-[var(--paper)] p-4 shadow-sm transition hover:border-[var(--gold)]">
       <div className="flex items-start justify-between gap-3">
         <a
-          href={sefariaUrl}
+          href={url}
           target="_blank"
           rel="noreferrer noopener"
           className="font-sans text-sm font-semibold text-[var(--deep)] hover:underline"
@@ -177,6 +180,7 @@ function LetterResultCard({ r }: { r: LetterMatch }) {
           >
             {copied ? "הועתק" : "העתק"}
           </button>
+          <SefariaLink href={url} />
         </div>
       </div>
 
